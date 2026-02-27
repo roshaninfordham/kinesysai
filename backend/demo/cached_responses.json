@@ -1,0 +1,126 @@
+{
+  "version": "1.0.0",
+  "description": "Pre-loaded model responses for common demo commands. Used when Demo Mode is enabled to avoid API calls and ensure 100% reliable execution.",
+  "responses": [
+    {
+      "command": "pick up the red cube",
+      "keywords": ["pick", "red", "cube"],
+      "decomposition": {
+        "actions": [
+          { "action": "APPROACH", "params": { "target": "red_cube" } },
+          { "action": "GRASP", "params": { "target": "red_cube" } }
+        ],
+        "narration": "Approaching the red cube, then grasping it securely."
+      },
+      "waypoints": [
+        { "x": 0.8, "y": 1.2, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.8, "y": 0.75, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.8, "y": 0.65, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.8, "y": 1.2, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false }
+      ],
+      "confirmation": "Done. Approaching the red cube. Grasping it securely."
+    },
+    {
+      "command": "place it in the center",
+      "keywords": ["place", "center"],
+      "decomposition": {
+        "actions": [
+          { "action": "TRANSLATE", "params": { "position": [0, 0.65, 0] } },
+          { "action": "RELEASE", "params": {} }
+        ],
+        "narration": "Moving to the center of the table, then releasing the object."
+      },
+      "waypoints": [
+        { "x": 0.0, "y": 1.2, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.0, "y": 0.75, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.0, "y": 0.65, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.0, "y": 1.2, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true }
+      ],
+      "confirmation": "Done. Placing the object at the center of the table."
+    },
+    {
+      "command": "move the blue cylinder to the right",
+      "keywords": ["blue", "cylinder", "right"],
+      "decomposition": {
+        "actions": [
+          { "action": "APPROACH", "params": { "target": "blue_cylinder" } },
+          { "action": "GRASP", "params": { "target": "blue_cylinder" } },
+          { "action": "TRANSLATE", "params": { "position": [0.6, 0.7, 0.6] } },
+          { "action": "RELEASE", "params": {} }
+        ],
+        "narration": "Approaching the blue cylinder, grasping it, moving to the right side, and releasing."
+      },
+      "waypoints": [
+        { "x": -0.5, "y": 1.2, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": -0.5, "y": 0.78, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": -0.5, "y": 0.7, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": -0.5, "y": 1.2, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.6, "y": 1.2, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.6, "y": 0.7, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.6, "y": 1.2, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true }
+      ],
+      "confirmation": "Done. Moving the blue cylinder to the right side of the table."
+    },
+    {
+      "command": "stack the red cube on the yellow box",
+      "keywords": ["stack", "red", "yellow"],
+      "decomposition": {
+        "actions": [
+          { "action": "APPROACH", "params": { "target": "red_cube" } },
+          { "action": "GRASP", "params": { "target": "red_cube" } },
+          { "action": "STACK", "params": { "target": "yellow_box" } }
+        ],
+        "narration": "Picking up the red cube and stacking it on the yellow box."
+      },
+      "waypoints": [
+        { "x": 0.8, "y": 1.2, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.8, "y": 0.65, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.8, "y": 1.2, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": -0.6, "y": 1.2, "z": -0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": -0.6, "y": 0.85, "z": -0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": -0.6, "y": 1.2, "z": -0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true }
+      ],
+      "confirmation": "Done. Picked up the red cube and stacked it on the yellow box."
+    },
+    {
+      "command": "push the green sphere forward",
+      "keywords": ["push", "green", "sphere", "forward"],
+      "decomposition": {
+        "actions": [
+          { "action": "APPROACH", "params": { "target": "green_sphere" } },
+          { "action": "PUSH", "params": { "target": "green_sphere", "distance": 0.5 } }
+        ],
+        "narration": "Approaching the green sphere and pushing it forward."
+      },
+      "waypoints": [
+        { "x": 0.3, "y": 0.75, "z": -0.7, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.3, "y": 0.67, "z": -0.5, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.3, "y": 0.67, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.3, "y": 1.2, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true }
+      ],
+      "confirmation": "Done. Pushed the green sphere forward along the table."
+    },
+    {
+      "command": "sort the objects by color",
+      "keywords": ["sort", "color", "objects"],
+      "decomposition": {
+        "actions": [
+          { "action": "SORT", "params": { "criterion": "color", "order": "left_to_right" } }
+        ],
+        "narration": "Sorting all objects by color from left to right."
+      },
+      "waypoints": [
+        { "x": 0.8, "y": 1.0, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.8, "y": 0.65, "z": 0.3, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": -0.8, "y": 0.65, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.3, "y": 1.0, "z": -0.5, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": 0.3, "y": 0.67, "z": -0.5, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.0, "y": 0.67, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": -0.5, "y": 1.0, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true },
+        { "x": -0.5, "y": 0.7, "z": 0.6, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": false },
+        { "x": 0.8, "y": 0.7, "z": 0.0, "roll": 0, "pitch": 0, "yaw": 0, "gripper_open": true }
+      ],
+      "confirmation": "Done. Objects sorted by color: red on the left, green in the center, blue on the right."
+    }
+  ]
+}

@@ -13,6 +13,11 @@ import PuzzleSelect from "./components/PuzzleSelect";
 import ResultScreen from "./components/ResultScreen";
 import Leaderboard from "./components/Leaderboard";
 import puzzleEngine, { type PuzzleState } from "./game/puzzleEngine";
+import ErrorBoundary from "./components/ErrorBoundary";
+import StartupCheck from "./components/StartupCheck";
+import { DemoBadge, DemoToggle } from "./components/DemoMode";
+import speechService from "./services/speechService";
+import armController from "./engine/armController";
 
 // ---------------------------------------------------------------------------
 // Connection badge
@@ -65,6 +70,7 @@ export default function App() {
   const { status } = useWebSocket();
   const [activeMode, setActiveMode] = useState<Mode>("Command");
   const [puzzleState, setPuzzleState] = useState<PuzzleState>(puzzleEngine.getState());
+  const [showStartup, setShowStartup] = useState(true);
 
   useEffect(() => {
     return puzzleEngine.onStateChange(setPuzzleState);
@@ -83,121 +89,248 @@ export default function App() {
     puzzleEngine.manualComplete();
   }, []);
 
+  // Reset scene — move arm to home position
+  const handleResetScene = useCallback(() => {
+    armController.moveToPosition(0, 1.5, 0);
+    armController.openGripper();
+  }, []);
+
+  // Emergency stop — halt arm immediately
+  const handleEmergencyStop = useCallback(() => {
+    armController.openGripper();
+    speechService.stop();
+  }, []);
+
+  // ─── Keyboard shortcuts ───
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore when typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      switch (e.code) {
+        case "Space":
+          e.preventDefault();
+          speechService.start();
+          break;
+        case "KeyR":
+          if (!e.metaKey && !e.ctrlKey) {
+            e.preventDefault();
+            handleResetScene();
+          }
+          break;
+        case "Digit1":
+          e.preventDefault();
+          setActiveMode("Command");
+          break;
+        case "Digit2":
+          e.preventDefault();
+          setActiveMode("Teach");
+          break;
+        case "Digit3":
+          e.preventDefault();
+          setActiveMode("Guide");
+          break;
+        case "Escape":
+          e.preventDefault();
+          handleEmergencyStop();
+          break;
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+        e.preventDefault();
+        speechService.stop();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+    };
+  }, [handleResetScene, handleEmergencyStop]);
+
   // Determine if puzzle UI should take over the right panel
   const puzzleActive = puzzleState.phase !== "IDLE";
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-kinesys-dark">
-      {/* ─── Header ─── */}
-      <header className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2.5">
-        <div className="flex items-center justify-between">
-          {/* Left: logo + mode selector */}
-          <div className="flex items-center gap-5">
+    <>
+      {/* ─── Startup Check Overlay ─── */}
+      {showStartup && <StartupCheck onDismiss={() => setShowStartup(false)} />}
+
+      <div className="flex h-screen flex-col overflow-hidden bg-kinesys-dark">
+        {/* ─── Header ─── */}
+        <header className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2.5">
+          <div className="flex items-center justify-between">
+            {/* Left: logo + mode selector */}
+            <div className="flex items-center gap-5">
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold tracking-tight">
+                  <span className="text-kinesys-fire">KIN</span>
+                  <span className="text-white/80">ESYS</span>
+                </h1>
+                <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[9px] text-white/25">
+                  v0.1.0
+                </span>
+                <DemoBadge />
+              </div>
+              <div className="h-5 w-px bg-white/[0.06]" />
+              <ModeSelector active={activeMode} onChange={setActiveMode} />
+            </div>
+
+            {/* Right: demo toggle + puzzle + connection */}
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold tracking-tight">
-                <span className="text-kinesys-fire">KIN</span>
-                <span className="text-white/80">ESYS</span>
-              </h1>
-              <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[9px] text-white/25">
-                v0.1.0
-              </span>
-            </div>
-            <div className="h-5 w-px bg-white/[0.06]" />
-            <ModeSelector active={activeMode} onChange={setActiveMode} />
-          </div>
-
-          {/* Right: status + connection */}
-          <div className="flex items-center gap-3">
-            <ScoreBoard />
-            <ConnectionBadge status={status} />
-          </div>
-        </div>
-      </header>
-
-      {/* ─── Main content: 65/35 split ─── */}
-      <main className="flex flex-1 gap-0 overflow-hidden">
-        {/* ─── LEFT: 3D Viewport (65%) ─── */}
-        <div className="relative flex-[65] overflow-hidden border-r border-white/[0.04]">
-          <SimulationCanvas />
-
-          {/* Overlay: Status bar at bottom of viewport */}
-          <div className="absolute bottom-3 left-3 right-3 z-10">
-            <StatusBar />
-          </div>
-
-          {/* Puzzle playing overlay — give up / complete buttons */}
-          {puzzleState.phase === "PLAYING" && (
-            <div className="absolute top-3 right-3 z-10 flex gap-2">
-              {puzzleState.activePuzzle?.id === 5 && (
-                <button
-                  onClick={handleManualComplete}
-                  className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 backdrop-blur-sm border border-emerald-500/20 hover:bg-emerald-500/30 transition-colors"
-                >
-                  ✓ Done
-                </button>
-              )}
+              <DemoToggle />
               <button
-                onClick={handleGiveUp}
-                className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400/70 backdrop-blur-sm border border-red-500/15 hover:bg-red-500/20 transition-colors"
+                onClick={handleResetScene}
+                className="flex items-center gap-1 rounded-lg border border-white/[0.06] bg-kinesys-surface px-2.5 py-1.5 text-[10px] font-mono text-white/30 hover:text-white/50 hover:border-white/10 transition-colors"
+                title="Reset Scene (R)"
               >
-                Give Up
+                ↻ Reset
               </button>
+              <ScoreBoard />
+              <ConnectionBadge status={status} />
             </div>
-          )}
-        </div>
+          </div>
+        </header>
 
-        {/* ─── RIGHT: Controls panel (35%) ─── */}
-        <div
-          className={`flex flex-[35] flex-col overflow-hidden border-l ${MODE_BORDER[activeMode]} bg-kinesys-dark transition-colors duration-300`}
-          style={{ maxWidth: "480px", minWidth: "340px" }}
-        >
-          {/* Scrollable content area */}
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-3">
-            {/* ─── Puzzle UI (when active) ─── */}
-            {puzzleState.phase === "SELECTING" && <PuzzleSelect />}
+        {/* ─── Main content: 65/35 split ─── */}
+        <main className="flex flex-1 gap-0 overflow-hidden">
+          {/* ─── LEFT: 3D Viewport (65%) ─── */}
+          <div className="relative flex-[65] overflow-hidden border-r border-white/[0.04]">
+            <ErrorBoundary name="SimulationCanvas">
+              <SimulationCanvas />
+            </ErrorBoundary>
 
-            {puzzleState.phase === "READY" && puzzleState.activePuzzle && (
-              <PuzzleReadyScreen
-                puzzle={puzzleState.activePuzzle}
-                onStart={handleStartPuzzle}
-                onBack={() => puzzleEngine.backToSelection()}
-              />
+            {/* Overlay: Status bar at bottom of viewport */}
+            <div className="absolute bottom-3 left-3 right-3 z-10">
+              <ErrorBoundary name="StatusBar">
+                <StatusBar />
+              </ErrorBoundary>
+            </div>
+
+            {/* Puzzle playing overlay — give up / complete buttons */}
+            {puzzleState.phase === "PLAYING" && (
+              <div className="absolute top-3 right-3 z-10 flex gap-2">
+                {puzzleState.activePuzzle?.id === 5 && (
+                  <button
+                    onClick={handleManualComplete}
+                    className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-xs font-medium text-emerald-400 backdrop-blur-sm border border-emerald-500/20 hover:bg-emerald-500/30 transition-colors"
+                  >
+                    ✓ Done
+                  </button>
+                )}
+                <button
+                  onClick={handleGiveUp}
+                  className="rounded-lg bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-400/70 backdrop-blur-sm border border-red-500/15 hover:bg-red-500/20 transition-colors"
+                >
+                  Give Up
+                </button>
+              </div>
             )}
 
-            {(puzzleState.phase === "COMPLETE" || puzzleState.phase === "FAILED") &&
-              puzzleState.lastScore &&
-              puzzleState.activePuzzle && (
-                <ResultScreen
-                  score={puzzleState.lastScore}
+            {/* Keyboard shortcut hint overlay */}
+            <div className="absolute top-3 left-3 z-10">
+              <div className="flex gap-1.5 opacity-30 hover:opacity-60 transition-opacity">
+                {[
+                  { key: "Space", label: "Talk" },
+                  { key: "R", label: "Reset" },
+                  { key: "1-3", label: "Mode" },
+                  { key: "Esc", label: "Stop" },
+                ].map(({ key, label }) => (
+                  <span
+                    key={key}
+                    className="rounded border border-white/10 bg-black/40 px-1.5 py-0.5 text-[8px] font-mono text-white/40 backdrop-blur-sm"
+                  >
+                    {key}={label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ─── RIGHT: Controls panel (35%) ─── */}
+          <div
+            className={`flex flex-[35] flex-col overflow-hidden border-l ${MODE_BORDER[activeMode]} bg-kinesys-dark transition-colors duration-300`}
+            style={{ maxWidth: "480px", minWidth: "340px" }}
+          >
+            {/* Scrollable content area */}
+            <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-3">
+              {/* ─── Puzzle UI (when active) ─── */}
+              {puzzleState.phase === "SELECTING" && (
+                <ErrorBoundary name="PuzzleSelect">
+                  <PuzzleSelect />
+                </ErrorBoundary>
+              )}
+
+              {puzzleState.phase === "READY" && puzzleState.activePuzzle && (
+                <PuzzleReadyScreen
                   puzzle={puzzleState.activePuzzle}
+                  onStart={handleStartPuzzle}
+                  onBack={() => puzzleEngine.backToSelection()}
                 />
               )}
 
-            {/* ─── Normal mode panels (when puzzle is playing or idle) ─── */}
-            {(puzzleState.phase === "PLAYING" || !puzzleActive) && (
-              <>
-                {activeMode === "Command" && <VoicePanel />}
-                {activeMode === "Teach" && <TeachPanel />}
-                {activeMode === "Guide" && <GuidePanel />}
-              </>
-            )}
+              {(puzzleState.phase === "COMPLETE" || puzzleState.phase === "FAILED") &&
+                puzzleState.lastScore &&
+                puzzleState.activePuzzle && (
+                  <ErrorBoundary name="ResultScreen">
+                    <ResultScreen
+                      score={puzzleState.lastScore}
+                      puzzle={puzzleState.activePuzzle}
+                    />
+                  </ErrorBoundary>
+                )}
 
-            {/* Safety panel — always visible */}
-            <SafetyPanel />
+              {/* ─── Normal mode panels (when puzzle is playing or idle) ─── */}
+              {(puzzleState.phase === "PLAYING" || !puzzleActive) && (
+                <>
+                  {activeMode === "Command" && (
+                    <ErrorBoundary name="VoicePanel">
+                      <VoicePanel />
+                    </ErrorBoundary>
+                  )}
+                  {activeMode === "Teach" && (
+                    <ErrorBoundary name="TeachPanel">
+                      <TeachPanel />
+                    </ErrorBoundary>
+                  )}
+                  {activeMode === "Guide" && (
+                    <ErrorBoundary name="GuidePanel">
+                      <GuidePanel />
+                    </ErrorBoundary>
+                  )}
+                </>
+              )}
 
-            {/* Leaderboard — shown below safety when puzzle mode is active */}
-            {puzzleActive && puzzleState.phase !== "SELECTING" && <Leaderboard />}
+              {/* Safety panel — always visible */}
+              <ErrorBoundary name="SafetyPanel">
+                <SafetyPanel />
+              </ErrorBoundary>
+
+              {/* Leaderboard — shown below safety when puzzle mode is active */}
+              {puzzleActive && puzzleState.phase !== "SELECTING" && (
+                <ErrorBoundary name="Leaderboard">
+                  <Leaderboard />
+                </ErrorBoundary>
+              )}
+            </div>
+
+            {/* Bottom bar */}
+            <div className="flex-shrink-0 border-t border-white/[0.04] px-3 py-2">
+              <p className="text-center font-mono text-[9px] text-white/15">
+                KINESYS — Human-Robot Interaction Platform
+              </p>
+            </div>
           </div>
-
-          {/* Bottom bar */}
-          <div className="flex-shrink-0 border-t border-white/[0.04] px-3 py-2">
-            <p className="text-center font-mono text-[9px] text-white/15">
-              KINESYS — Human-Robot Interaction Platform
-            </p>
-          </div>
-        </div>
-      </main>
-    </div>
+        </main>
+      </div>
+    </>
   );
 }
 
