@@ -1,0 +1,148 @@
+{
+  "version": "1.0.0",
+  "description": "KINESYS Robot Action Primitive Library — 12 parameterized primitives for task execution",
+  "primitives": {
+    "APPROACH": {
+      "id": "APPROACH",
+      "description": "Move end-effector to a position near the target object, preparing for interaction",
+      "parameters": {
+        "target": { "type": "string", "required": true, "description": "Object identifier to approach" },
+        "offset": { "type": "vec3", "required": false, "default": [0, 0, 0.05], "description": "Offset from target center [x, y, z] in meters" },
+        "speed": { "type": "number", "required": false, "default": 0.5, "min": 0.01, "max": 1.0, "description": "Normalized speed (0–1)" }
+      },
+      "preconditions": ["target_visible", "path_clear"],
+      "postconditions": ["near_target"],
+      "safety": { "collision_check": true, "max_velocity_mps": 0.5 }
+    },
+    "GRASP": {
+      "id": "GRASP",
+      "description": "Close gripper to grasp the target object",
+      "parameters": {
+        "target": { "type": "string", "required": true, "description": "Object identifier to grasp" },
+        "force": { "type": "number", "required": false, "default": 0.5, "min": 0.1, "max": 1.0, "description": "Normalized grip force (0–1)" },
+        "width": { "type": "number", "required": false, "default": null, "description": "Gripper width override in meters" }
+      },
+      "preconditions": ["near_target", "gripper_open"],
+      "postconditions": ["object_grasped"],
+      "safety": { "collision_check": true, "max_force_n": 20 }
+    },
+    "RELEASE": {
+      "id": "RELEASE",
+      "description": "Open gripper to release the currently held object",
+      "parameters": {
+        "speed": { "type": "number", "required": false, "default": 0.5, "min": 0.1, "max": 1.0, "description": "Gripper opening speed (0–1)" }
+      },
+      "preconditions": ["object_grasped"],
+      "postconditions": ["gripper_open", "object_placed"],
+      "safety": { "collision_check": false, "height_check": true }
+    },
+    "TRANSLATE": {
+      "id": "TRANSLATE",
+      "description": "Move end-effector (and any held object) to an absolute or relative position",
+      "parameters": {
+        "position": { "type": "vec3", "required": false, "description": "Absolute target position [x, y, z] in meters" },
+        "delta": { "type": "vec3", "required": false, "description": "Relative displacement [dx, dy, dz] in meters" },
+        "speed": { "type": "number", "required": false, "default": 0.5, "min": 0.01, "max": 1.0, "description": "Normalized speed (0–1)" }
+      },
+      "preconditions": ["path_clear"],
+      "postconditions": ["at_position"],
+      "safety": { "collision_check": true, "workspace_bounds_check": true, "max_velocity_mps": 0.5 }
+    },
+    "ROTATE": {
+      "id": "ROTATE",
+      "description": "Rotate end-effector (and any held object) around a specified axis",
+      "parameters": {
+        "axis": { "type": "string", "required": true, "enum": ["x", "y", "z"], "description": "Rotation axis" },
+        "degrees": { "type": "number", "required": true, "min": -360, "max": 360, "description": "Rotation angle in degrees" },
+        "speed": { "type": "number", "required": false, "default": 0.3, "min": 0.01, "max": 1.0, "description": "Normalized rotation speed (0–1)" }
+      },
+      "preconditions": [],
+      "postconditions": ["at_orientation"],
+      "safety": { "collision_check": true, "max_angular_velocity_dps": 90 }
+    },
+    "PLACE": {
+      "id": "PLACE",
+      "description": "Place a held object at a target location and release",
+      "parameters": {
+        "position": { "type": "vec3", "required": false, "description": "Absolute placement position [x, y, z] in meters" },
+        "target": { "type": "string", "required": false, "description": "Target surface or container identifier" },
+        "gentle": { "type": "boolean", "required": false, "default": true, "description": "Use slow final descent for delicate placement" }
+      },
+      "preconditions": ["object_grasped"],
+      "postconditions": ["gripper_open", "object_placed"],
+      "safety": { "collision_check": true, "descent_speed_mps": 0.1 }
+    },
+    "PUSH": {
+      "id": "PUSH",
+      "description": "Push an object along a direction using the end-effector or gripper",
+      "parameters": {
+        "target": { "type": "string", "required": true, "description": "Object identifier to push" },
+        "direction": { "type": "vec3", "required": true, "description": "Push direction vector [dx, dy, dz]" },
+        "distance": { "type": "number", "required": true, "min": 0.01, "max": 0.5, "description": "Push distance in meters" },
+        "force": { "type": "number", "required": false, "default": 0.3, "min": 0.1, "max": 1.0, "description": "Normalized push force (0–1)" }
+      },
+      "preconditions": ["near_target", "path_clear"],
+      "postconditions": ["object_displaced"],
+      "safety": { "collision_check": true, "max_force_n": 15 }
+    },
+    "POUR": {
+      "id": "POUR",
+      "description": "Tilt a grasped container to pour its contents into a target",
+      "parameters": {
+        "target_container": { "type": "string", "required": true, "description": "Container to pour into" },
+        "angle": { "type": "number", "required": false, "default": 90, "min": 10, "max": 180, "description": "Pour tilt angle in degrees" },
+        "speed": { "type": "number", "required": false, "default": 0.2, "min": 0.05, "max": 0.5, "description": "Normalized tilt speed (0–1)" }
+      },
+      "preconditions": ["object_grasped", "target_visible"],
+      "postconditions": ["contents_transferred"],
+      "safety": { "collision_check": true, "spill_check": true }
+    },
+    "STACK": {
+      "id": "STACK",
+      "description": "Place a held object on top of a target object, aligning centers",
+      "parameters": {
+        "target": { "type": "string", "required": true, "description": "Object to stack on top of" },
+        "alignment": { "type": "string", "required": false, "default": "center", "enum": ["center", "left", "right", "front", "back"], "description": "Alignment relative to target" },
+        "offset_z": { "type": "number", "required": false, "default": 0.0, "description": "Additional vertical offset in meters" }
+      },
+      "preconditions": ["object_grasped", "target_visible"],
+      "postconditions": ["object_stacked", "gripper_open"],
+      "safety": { "collision_check": true, "stability_check": true }
+    },
+    "SORT": {
+      "id": "SORT",
+      "description": "Arrange multiple objects according to a sorting criterion",
+      "parameters": {
+        "objects": { "type": "array", "items": "string", "required": true, "description": "List of object identifiers to sort" },
+        "criterion": { "type": "string", "required": true, "enum": ["color", "size", "type", "position"], "description": "Sorting criterion" },
+        "direction": { "type": "string", "required": false, "default": "left_to_right", "enum": ["left_to_right", "right_to_left", "front_to_back", "back_to_front"], "description": "Spatial arrangement direction" }
+      },
+      "preconditions": ["objects_visible"],
+      "postconditions": ["objects_sorted"],
+      "safety": { "collision_check": true }
+    },
+    "INSPECT": {
+      "id": "INSPECT",
+      "description": "Move camera or end-effector to observe a target, capturing a VLM scene snapshot",
+      "parameters": {
+        "target": { "type": "string", "required": true, "description": "Object or region to inspect" },
+        "distance": { "type": "number", "required": false, "default": 0.15, "min": 0.05, "max": 0.5, "description": "Observation distance in meters" },
+        "capture_image": { "type": "boolean", "required": false, "default": true, "description": "Whether to capture and send image to VLM" }
+      },
+      "preconditions": ["target_visible"],
+      "postconditions": ["scene_analyzed"],
+      "safety": { "collision_check": true }
+    },
+    "WAIT": {
+      "id": "WAIT",
+      "description": "Pause execution for a specified duration or until a condition is met",
+      "parameters": {
+        "duration_ms": { "type": "number", "required": false, "default": 1000, "min": 100, "max": 30000, "description": "Wait duration in milliseconds" },
+        "condition": { "type": "string", "required": false, "description": "Optional condition to wait for (e.g., 'object_settled', 'user_confirmation')" }
+      },
+      "preconditions": [],
+      "postconditions": ["wait_complete"],
+      "safety": { "timeout_ms": 30000 }
+    }
+  }
+}
