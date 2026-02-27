@@ -11,6 +11,11 @@ from typing import Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from ai.llm_client import LLMClient
+from ai.task_decomposer import decompose_command
+from ai.scene_analyzer import scene_state_from_frontend
+from core.trajectory_planner import plan_trajectory
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -92,6 +97,20 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # ---------------------------------------------------------------------------
+# LLM Client (singleton, lazy-init)
+# ---------------------------------------------------------------------------
+
+_llm_client: LLMClient | None = None
+
+
+def get_llm_client() -> LLMClient:
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = LLMClient()
+    return _llm_client
+
+
+# ---------------------------------------------------------------------------
 # REST Endpoints
 # ---------------------------------------------------------------------------
 
@@ -114,6 +133,104 @@ async def health_check() -> dict[str, Any]:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "connections": len(manager.active_connections),
     }
+
+
+# ---------------------------------------------------------------------------
+# Voice Command Pipeline
+# ---------------------------------------------------------------------------
+
+
+async def handle_voice_command(
+    websocket: WebSocket,
+    data: dict[str, Any],
+) -> None:
+    """
+    Full voice command pipeline:
+      transcript → LLM decomposition → trajectory planning → safety validation → response
+    """
+    command: str = data.get("command", "").strip()
+    scene_data: dict[str, Any] = data.get("scene", {})
+
+    if not command:
+        await manager.send_json(websocket, {
+            "type": "plan_error",
+            "error": "Empty command received",
+        })
+        return
+
+    logger.info("Voice command: '%s'", command)
+
+    # 1. Send THINKING status
+    await manager.send_json(websocket, {
+        "type": "status_update",
+        "state": "THINKING",
+    })
+
+    # 2. Parse scene state from frontend
+    try:
+        scene = scene_state_from_frontend(scene_data)
+    except Exception as exc:
+        logger.error("Scene parse error: %s", exc)
+        await manager.send_json(websocket, {
+            "type": "plan_error",
+            "error": f"Failed to parse scene state: {exc}",
+        })
+        return
+
+    # 3. LLM task decomposition
+    await manager.send_json(websocket, {
+        "type": "status_update",
+        "state": "PLANNING",
+    })
+
+    llm = get_llm_client()
+    decomposition = await decompose_command(command, scene, llm_client=llm)
+
+    if not decomposition.success:
+        logger.warning("Decomposition failed: %s", decomposition.error)
+        await manager.send_json(websocket, {
+            "type": "plan_error",
+            "error": decomposition.error or "Failed to decompose command",
+        })
+        return
+
+    logger.info("Decomposed into %d actions", len(decomposition.actions))
+
+    # 4. Trajectory planning + safety validation
+    await manager.send_json(websocket, {
+        "type": "status_update",
+        "state": "VALIDATING",
+    })
+
+    plan = plan_trajectory(decomposition.actions, scene)
+
+    # 5. Build response with waypoints
+    waypoints_list = [
+        {
+            "x": wp.x,
+            "y": wp.y,
+            "z": wp.z,
+            "roll": wp.roll,
+            "pitch": wp.pitch,
+            "yaw": wp.yaw,
+            "gripper_open": wp.gripper_open,
+        }
+        for wp in plan.all_waypoints
+    ]
+
+    # Build confirmation message from narrations
+    if plan.narration_sequence:
+        confirmation = "Done. " + ". ".join(plan.narration_sequence) + "."
+    else:
+        confirmation = "Done."
+
+    await manager.send_json(websocket, {
+        "type": "plan_result",
+        "plan": plan.to_dict(),
+        "waypoints": waypoints_list,
+        "confirmation": confirmation,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -151,15 +268,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             msg_type = data.get("type", "unknown")
             logger.info("Received message type=%s", msg_type)
 
-            # Echo with server metadata
-            response: dict[str, Any] = {
-                "type": "echo",
-                "original": data,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "server": "kinesys-backend",
-            }
-
-            await manager.send_json(websocket, response)
+            if msg_type == "voice_command":
+                await handle_voice_command(websocket, data)
+            elif msg_type == "ping":
+                await manager.send_json(websocket, {"type": "pong"})
+            else:
+                # Echo for other message types
+                await manager.send_json(websocket, {
+                    "type": "echo",
+                    "original": data,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "server": "kinesys-backend",
+                })
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)

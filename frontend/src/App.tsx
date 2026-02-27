@@ -2,9 +2,11 @@ import { useState } from "react";
 import { useWebSocket } from "./hooks/useWebSocket";
 import type { ConnectionStatus } from "./services/websocketService";
 import SimulationCanvas from "./components/SimulationCanvas";
+import VoicePanel from "./components/VoicePanel";
+import StatusBar from "./components/StatusBar";
 
 // ---------------------------------------------------------------------------
-// Status badge
+// Connection badge
 // ---------------------------------------------------------------------------
 
 const STATUS_STYLES: Record<ConnectionStatus, string> = {
@@ -21,7 +23,7 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
   disconnected: "Disconnected",
 };
 
-function StatusBadge({ status }: { status: ConnectionStatus }) {
+function ConnectionBadge({ status }: { status: ConnectionStatus }) {
   return (
     <span
       className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
@@ -37,27 +39,52 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
 }
 
 // ---------------------------------------------------------------------------
+// Mode selector
+// ---------------------------------------------------------------------------
+
+type Mode = "Command" | "Teach" | "Guide";
+
+function ModeSelector({
+  active,
+  onChange,
+}: {
+  active: Mode;
+  onChange: (mode: Mode) => void;
+}) {
+  const modes: Mode[] = ["Command", "Teach", "Guide"];
+  const icons: Record<Mode, string> = {
+    Command: "🗣️",
+    Teach: "📸",
+    Guide: "🕹️",
+  };
+
+  return (
+    <div className="flex gap-2">
+      {modes.map((mode) => (
+        <button
+          key={mode}
+          onClick={() => onChange(mode)}
+          className={`flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition ${
+            active === mode
+              ? "border-kinesys-primary bg-kinesys-primary/15 text-white"
+              : "border-white/10 bg-kinesys-surface text-white/50 hover:border-kinesys-primary/30 hover:text-white/80"
+          }`}
+        >
+          <span>{icons[mode]}</span>
+          {mode}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // App
 // ---------------------------------------------------------------------------
 
 export default function App() {
-  const { status, messages, send, clearMessages } = useWebSocket();
-  const [input, setInput] = useState("");
-
-  const handleSend = () => {
-    const trimmed = input.trim();
-    if (!trimmed) return;
-
-    send({ type: "test", payload: trimmed });
-    setInput("");
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
+  const { status } = useWebSocket();
+  const [activeMode, setActiveMode] = useState<Mode>("Command");
 
   return (
     <div className="flex min-h-screen flex-col bg-kinesys-dark">
@@ -70,67 +97,46 @@ export default function App() {
             </h1>
             <span className="text-xs text-white/40">v0.1.0</span>
           </div>
-          <StatusBadge status={status} />
+          <ConnectionBadge status={status} />
         </div>
       </header>
 
       {/* Main content */}
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 p-6">
-        {/* Mode selector placeholder */}
-        <div className="flex gap-2">
-          {(["Command", "Teach", "Guide"] as const).map((mode) => (
-            <button
-              key={mode}
-              className="rounded-lg border border-white/10 bg-kinesys-surface px-4 py-2 text-sm font-medium text-white/60 transition hover:border-kinesys-primary/50 hover:text-white"
-            >
-              {mode}
-            </button>
-          ))}
+        {/* Mode selector + Status bar */}
+        <div className="flex items-center justify-between gap-4">
+          <ModeSelector active={activeMode} onChange={setActiveMode} />
+          <div className="flex-1">
+            <StatusBar />
+          </div>
         </div>
 
         {/* 3D viewport */}
-        <div className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-kinesys-surface" style={{ minHeight: 400 }}>
+        <div
+          className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-kinesys-surface"
+          style={{ minHeight: 400 }}
+        >
           <SimulationCanvas />
         </div>
 
-        {/* Message log */}
-        <div className="h-48 overflow-y-auto rounded-lg border border-white/10 bg-black/30 p-3 font-mono text-xs">
-          {messages.length === 0 ? (
-            <p className="text-white/20">No messages yet. Send a test message below.</p>
-          ) : (
-            messages.map((msg, i) => (
-              <div key={i} className="mb-1 text-white/70">
-                <span className="text-kinesys-accent">[{msg.type}]</span>{" "}
-                {JSON.stringify(msg, null, 0)}
-              </div>
-            ))
-          )}
-        </div>
+        {/* Voice panel (Command mode) */}
+        {activeMode === "Command" && <VoicePanel />}
 
-        {/* Input bar */}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a test message…"
-            className="flex-1 rounded-lg border border-white/10 bg-kinesys-surface px-4 py-2.5 text-sm text-white placeholder-white/30 outline-none transition focus:border-kinesys-primary/50"
-          />
-          <button
-            onClick={handleSend}
-            disabled={status !== "connected" || !input.trim()}
-            className="rounded-lg bg-kinesys-primary px-5 py-2.5 text-sm font-medium text-white transition hover:bg-kinesys-secondary disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Send
-          </button>
-          <button
-            onClick={clearMessages}
-            className="rounded-lg border border-white/10 px-4 py-2.5 text-sm text-white/50 transition hover:text-white"
-          >
-            Clear
-          </button>
-        </div>
+        {/* Placeholder for other modes */}
+        {activeMode === "Teach" && (
+          <div className="flex h-36 items-center justify-center rounded-lg border border-white/10 bg-kinesys-surface">
+            <p className="text-sm text-white/30">
+              Teach Mode — webcam demonstration capture (coming soon)
+            </p>
+          </div>
+        )}
+        {activeMode === "Guide" && (
+          <div className="flex h-36 items-center justify-center rounded-lg border border-white/10 bg-kinesys-surface">
+            <p className="text-sm text-white/30">
+              Guide Mode — hand gesture teleoperation (coming soon)
+            </p>
+          </div>
+        )}
       </main>
 
       {/* Footer */}
