@@ -30,15 +30,19 @@ GROQ_DEFAULT_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
 OLLAMA_DEFAULT_MODEL = "llama3.2:3b"
 OLLAMA_DEFAULT_HOST = "http://localhost:11434"
+GEMINI_DEFAULT_MODEL = "gemini-2.5-flash-lite"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1"
 
 GROQ_API_BASE = "https://api.groq.com/openai/v1"
 GROQ_MAX_RETRIES = 2
 GROQ_TIMEOUT_S = 30.0
 OLLAMA_TIMEOUT_S = 60.0
+GEMINI_TIMEOUT_S = 30.0
 
 
 class LLMProvider(Enum):
     GROQ = "groq"
+    GEMINI = "gemini"
     OLLAMA = "ollama"
 
 
@@ -193,6 +197,115 @@ class RateLimitError(Exception):
 
 
 # ---------------------------------------------------------------------------
+# Gemini Client
+# ---------------------------------------------------------------------------
+
+
+class GeminiClient:
+    """Async client for Google Gemini API (REST generateContent endpoint)."""
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.model = model or GEMINI_DEFAULT_MODEL
+        self._http: httpx.AsyncClient | None = None
+
+    async def _get_http(self) -> httpx.AsyncClient:
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(
+                base_url=GEMINI_API_BASE,
+                timeout=GEMINI_TIMEOUT_S,
+            )
+        return self._http
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.1,
+        max_tokens: int = 2048,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Send a chat request to Gemini generateContent API."""
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY not set.")
+
+        http = await self._get_http()
+
+        # Convert OpenAI-style messages to Gemini contents format
+        # System prompt becomes the first user turn with a special prefix
+        contents = []
+        system_text = ""
+        for msg in messages:
+            role = msg.get("role", "user")
+            text = msg.get("content", "")
+            if role == "system":
+                system_text = text
+            elif role == "user":
+                # Prepend system text to first user message
+                if system_text:
+                    text = system_text + "\n\n" + text
+                    system_text = ""
+                contents.append({"role": "user", "parts": [{"text": text}]})
+            elif role == "assistant":
+                contents.append({"role": "model", "parts": [{"text": text}]})
+
+        payload: dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens,
+            },
+        }
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+
+        url = f"/models/{self.model}:generateContent?key={self.api_key}"
+
+        try:
+            resp = await http.post(url, json=payload)
+
+            if resp.status_code == 429:
+                raise RateLimitError("Gemini rate limit exceeded")
+
+            resp.raise_for_status()
+            data = resp.json()
+
+            # Extract text from response
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise ValueError("Gemini returned no candidates")
+
+            content = candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            usage = data.get("usageMetadata", {})
+
+            logger.info(
+                "Gemini response: model=%s tokens=%s",
+                self.model,
+                usage.get("totalTokenCount", "?"),
+            )
+
+            return LLMResponse(
+                content=content,
+                provider=LLMProvider.GEMINI,
+                model=self.model,
+                usage={
+                    "prompt_tokens": usage.get("promptTokenCount", 0),
+                    "completion_tokens": usage.get("candidatesTokenCount", 0),
+                    "total_tokens": usage.get("totalTokenCount", 0),
+                },
+                raw=data,
+            )
+
+        except httpx.TimeoutException:
+            raise
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Gemini HTTP error: {exc.response.status_code}") from exc
+
+    async def close(self) -> None:
+        if self._http and not self._http.is_closed:
+            await self._http.aclose()
+
+
+# ---------------------------------------------------------------------------
 # Ollama Client
 # ---------------------------------------------------------------------------
 
@@ -276,25 +389,36 @@ class OllamaClient:
 
 class LLMClient:
     """
-    Unified LLM client: tries Groq first, falls back to Ollama on rate limit.
+    Unified LLM client: Groq → Gemini → Ollama fallback chain.
+
+    Priority:
+      1. Groq (fastest, cloud, requires GROQ_API_KEY)
+      2. Gemini (reliable fallback, requires GEMINI_API_KEY)
+      3. Ollama (local, no API key required, must be running)
     """
 
     def __init__(
         self,
         groq_api_key: str | None = None,
         groq_model: str | None = None,
+        gemini_api_key: str | None = None,
+        gemini_model: str | None = None,
         ollama_host: str | None = None,
         ollama_model: str | None = None,
     ) -> None:
         self.groq = GroqClient(api_key=groq_api_key, model=groq_model)
+        self.gemini = GeminiClient(api_key=gemini_api_key, model=gemini_model)
         self.ollama = OllamaClient(host=ollama_host, model=ollama_model)
-        self._force_ollama = False
+        self._skip_groq = False
+        self._skip_gemini = False
 
     @property
     def active_provider(self) -> LLMProvider:
-        if self._force_ollama or not self.groq.api_key:
-            return LLMProvider.OLLAMA
-        return LLMProvider.GROQ
+        if not self._skip_groq and self.groq.api_key:
+            return LLMProvider.GROQ
+        if not self._skip_gemini and self.gemini.api_key:
+            return LLMProvider.GEMINI
+        return LLMProvider.OLLAMA
 
     async def chat(
         self,
@@ -304,32 +428,66 @@ class LLMClient:
         json_mode: bool = False,
     ) -> LLMResponse:
         """
-        Send a chat request. Uses Groq if available, auto-falls back to Ollama.
+        Send a chat request. Tries Groq → Gemini → Ollama in order.
+        Skips providers with missing API keys or persistent errors.
         """
-        # Try Groq first
-        if self.active_provider == LLMProvider.GROQ:
+        # 1. Try Groq
+        if not self._skip_groq and self.groq.api_key:
             try:
-                return await self.groq.chat(
-                    messages, temperature, max_tokens, json_mode
-                )
+                result = await self.groq.chat(messages, temperature, max_tokens, json_mode)
+                logger.info("LLM served by Groq/%s", result.model)
+                return result
             except RateLimitError:
-                logger.warning("Groq rate limited — falling back to Ollama")
-                self._force_ollama = True
-            except (httpx.HTTPStatusError, httpx.TimeoutException, ValueError) as exc:
-                logger.warning("Groq error (%s) — falling back to Ollama", exc)
-                self._force_ollama = True
+                logger.warning("Groq rate limited — falling back to Gemini")
+                self._skip_groq = True
+            except (httpx.HTTPStatusError, httpx.TimeoutException, ValueError, RuntimeError) as exc:
+                logger.warning("Groq unavailable (%s) — falling back to Gemini", exc)
+                self._skip_groq = True
+        else:
+            if not self.groq.api_key:
+                logger.debug("Groq skipped: GROQ_API_KEY not set")
 
-        # Fallback to Ollama
+        # 2. Try Gemini
+        if not self._skip_gemini and self.gemini.api_key:
+            try:
+                result = await self.gemini.chat(messages, temperature, max_tokens, json_mode)
+                logger.info("LLM served by Gemini/%s", result.model)
+                return result
+            except RateLimitError:
+                logger.warning("Gemini rate limited — falling back to Ollama")
+                self._skip_gemini = True
+            except (httpx.HTTPStatusError, httpx.TimeoutException, ValueError, RuntimeError) as exc:
+                logger.warning("Gemini unavailable (%s) — falling back to Ollama", exc)
+                self._skip_gemini = True
+        else:
+            if not self.gemini.api_key:
+                logger.debug("Gemini skipped: GEMINI_API_KEY not set")
+
+        # 3. Try Ollama
         try:
-            return await self.ollama.chat(
-                messages, temperature, max_tokens, json_mode
-            )
+            result = await self.ollama.chat(messages, temperature, max_tokens, json_mode)
+            logger.info("LLM served by Ollama/%s", result.model)
+            return result
         except ConnectionError:
-            logger.error("Both Groq and Ollama are unavailable")
-            raise RuntimeError(
-                "No LLM available. Set GROQ_API_KEY or start Ollama (ollama serve)."
-            )
+            pass
+
+        # All providers failed
+        available = []
+        if self.groq.api_key:
+            available.append("GROQ_API_KEY ✓ (check key validity)")
+        else:
+            available.append("GROQ_API_KEY ✗ (not set in .env)")
+        if self.gemini.api_key:
+            available.append("GEMINI_API_KEY ✓ (check key validity)")
+        else:
+            available.append("GEMINI_API_KEY ✗ (not set in .env)")
+        available.append("Ollama ✗ (not running — start with: ollama serve)")
+
+        raise RuntimeError(
+            "No LLM available. Status:\n" + "\n".join(f"  • {a}" for a in available)
+        )
 
     async def close(self) -> None:
         await self.groq.close()
+        await self.gemini.close()
         await self.ollama.close()
