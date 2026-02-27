@@ -46,12 +46,12 @@ class SafetyConfig:
     workspace: WorkspaceBounds = field(default_factory=WorkspaceBounds)
     table_height: float = 0.5
     table_collision_margin: float = 0.01
-    max_linear_velocity_mps: float = 1.0
-    max_angular_velocity_dps: float = 90.0
+    max_linear_velocity_mps: float = 2.5
+    max_angular_velocity_dps: float = 180.0
     max_gripper_force_n: float = 20.0
     min_obstacle_clearance_m: float = 0.02
-    max_waypoint_distance_m: float = 2.0
-    assumed_dt: float = 1.0  # Assumed time between waypoints for velocity checks
+    max_waypoint_distance_m: float = 3.0
+    assumed_dt: float = 2.0  # Assumed time between waypoints for velocity checks
 
 
 DEFAULT_SAFETY_CONFIG = SafetyConfig()
