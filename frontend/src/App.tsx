@@ -6,6 +6,9 @@ import VoicePanel from "./components/VoicePanel";
 import StatusBar from "./components/StatusBar";
 import TeachPanel from "./components/TeachPanel";
 import GuidePanel from "./components/GuidePanel";
+import ModeSelector, { type Mode } from "./components/ModeSelector";
+import SafetyPanel from "./components/SafetyPanel";
+import ScoreBoard from "./components/ScoreBoard";
 
 // ---------------------------------------------------------------------------
 // Connection badge
@@ -28,10 +31,10 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
 function ConnectionBadge({ status }: { status: ConnectionStatus }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${STATUS_STYLES[status]}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10px] font-medium font-mono ${STATUS_STYLES[status]}`}
     >
       <span
-        className={`h-2 w-2 rounded-full ${
+        className={`h-1.5 w-1.5 rounded-full ${
           status === "connected" ? "bg-emerald-400 animate-pulse" : "bg-current"
         }`}
       />
@@ -41,44 +44,14 @@ function ConnectionBadge({ status }: { status: ConnectionStatus }) {
 }
 
 // ---------------------------------------------------------------------------
-// Mode selector
+// Mode accent color (for dynamic border/glow on right panel)
 // ---------------------------------------------------------------------------
 
-type Mode = "Command" | "Teach" | "Guide";
-
-function ModeSelector({
-  active,
-  onChange,
-}: {
-  active: Mode;
-  onChange: (mode: Mode) => void;
-}) {
-  const modes: Mode[] = ["Command", "Teach", "Guide"];
-  const icons: Record<Mode, string> = {
-    Command: "🗣️",
-    Teach: "📸",
-    Guide: "🕹️",
-  };
-
-  return (
-    <div className="flex gap-2">
-      {modes.map((mode) => (
-        <button
-          key={mode}
-          onClick={() => onChange(mode)}
-          className={`flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-medium transition ${
-            active === mode
-              ? "border-kinesys-primary bg-kinesys-primary/15 text-white"
-              : "border-white/10 bg-kinesys-surface text-white/50 hover:border-kinesys-primary/30 hover:text-white/80"
-          }`}
-        >
-          <span>{icons[mode]}</span>
-          {mode}
-        </button>
-      ))}
-    </div>
-  );
-}
+const MODE_BORDER: Record<Mode, string> = {
+  Command: "border-kinesys-fire/15",
+  Teach: "border-kinesys-cyan/15",
+  Guide: "border-kinesys-indigo/15",
+};
 
 // ---------------------------------------------------------------------------
 // App
@@ -89,50 +62,69 @@ export default function App() {
   const [activeMode, setActiveMode] = useState<Mode>("Command");
 
   return (
-    <div className="flex min-h-screen flex-col bg-kinesys-dark">
-      {/* Header */}
-      <header className="border-b border-white/10 px-6 py-4">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold tracking-tight">
-              <span className="text-kinesys-primary">KINESYS</span>
-            </h1>
-            <span className="text-xs text-white/40">v0.1.0</span>
+    <div className="flex h-screen flex-col overflow-hidden bg-kinesys-dark">
+      {/* ─── Header ─── */}
+      <header className="flex-shrink-0 border-b border-white/[0.06] px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          {/* Left: logo + mode selector */}
+          <div className="flex items-center gap-5">
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold tracking-tight">
+                <span className="text-kinesys-fire">KIN</span>
+                <span className="text-white/80">ESYS</span>
+              </h1>
+              <span className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[9px] text-white/25">
+                v0.1.0
+              </span>
+            </div>
+            <div className="h-5 w-px bg-white/[0.06]" />
+            <ModeSelector active={activeMode} onChange={setActiveMode} />
           </div>
-          <ConnectionBadge status={status} />
+
+          {/* Right: status + connection */}
+          <div className="flex items-center gap-3">
+            <ScoreBoard />
+            <ConnectionBadge status={status} />
+          </div>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-4 p-6">
-        {/* Mode selector + Status bar */}
-        <div className="flex items-center justify-between gap-4">
-          <ModeSelector active={activeMode} onChange={setActiveMode} />
-          <div className="flex-1">
+      {/* ─── Main content: 65/35 split ─── */}
+      <main className="flex flex-1 gap-0 overflow-hidden">
+        {/* ─── LEFT: 3D Viewport (65%) ─── */}
+        <div className="relative flex-[65] overflow-hidden border-r border-white/[0.04]">
+          <SimulationCanvas />
+
+          {/* Overlay: Status bar at bottom of viewport */}
+          <div className="absolute bottom-3 left-3 right-3 z-10">
             <StatusBar />
           </div>
         </div>
 
-        {/* 3D viewport */}
+        {/* ─── RIGHT: Controls panel (35%) ─── */}
         <div
-          className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-kinesys-surface"
-          style={{ minHeight: 400 }}
+          className={`flex flex-[35] flex-col overflow-hidden border-l ${MODE_BORDER[activeMode]} bg-kinesys-dark transition-colors duration-300`}
+          style={{ maxWidth: "480px", minWidth: "340px" }}
         >
-          <SimulationCanvas />
+          {/* Scrollable content area */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-3">
+            {/* Mode-specific panel */}
+            {activeMode === "Command" && <VoicePanel />}
+            {activeMode === "Teach" && <TeachPanel />}
+            {activeMode === "Guide" && <GuidePanel />}
+
+            {/* Safety panel — always visible */}
+            <SafetyPanel />
+          </div>
+
+          {/* Bottom bar — mode hint */}
+          <div className="flex-shrink-0 border-t border-white/[0.04] px-3 py-2">
+            <p className="text-center font-mono text-[9px] text-white/15">
+              KINESYS — Human-Robot Interaction Platform
+            </p>
+          </div>
         </div>
-
-        {/* Voice panel (Command mode) */}
-        {activeMode === "Command" && <VoicePanel />}
-
-        {/* Placeholder for other modes */}
-        {activeMode === "Teach" && <TeachPanel />}
-        {activeMode === "Guide" && <GuidePanel />}
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-white/10 px-6 py-3 text-center text-xs text-white/30">
-        KINESYS — Human-Robot Interaction Platform
-      </footer>
     </div>
   );
 }

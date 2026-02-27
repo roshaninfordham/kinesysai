@@ -17,6 +17,7 @@ import { OrbitControls, Environment, ContactShadows, Grid } from "@react-three/d
 import { Physics } from "@react-three/cannon";
 import RobotArm from "./RobotArm";
 import SceneObjects from "./SceneObjects";
+import TrajectoryViz from "./TrajectoryViz";
 import { GRAVITY } from "../engine/physics";
 
 // ---------------------------------------------------------------------------
@@ -117,6 +118,9 @@ function Scene() {
 
       {/* Robot arm (kinematic — not in physics world) */}
       <RobotArm />
+
+      {/* Planned trajectory preview (spheres + lines before execution) */}
+      <TrajectoryViz />
 
       {/* Orbit camera controls */}
       <OrbitControls
