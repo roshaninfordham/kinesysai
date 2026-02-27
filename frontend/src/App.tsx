@@ -4,6 +4,8 @@ import type { ConnectionStatus } from "./services/websocketService";
 import SimulationCanvas from "./components/SimulationCanvas";
 import VoicePanel from "./components/VoicePanel";
 import StatusBar from "./components/StatusBar";
+import TeachPanel from "./components/TeachPanel";
+import GuidePanel from "./components/GuidePanel";
 
 // ---------------------------------------------------------------------------
 // Connection badge
@@ -123,20 +125,8 @@ export default function App() {
         {activeMode === "Command" && <VoicePanel />}
 
         {/* Placeholder for other modes */}
-        {activeMode === "Teach" && (
-          <div className="flex h-36 items-center justify-center rounded-lg border border-white/10 bg-kinesys-surface">
-            <p className="text-sm text-white/30">
-              Teach Mode — webcam demonstration capture (coming soon)
-            </p>
-          </div>
-        )}
-        {activeMode === "Guide" && (
-          <div className="flex h-36 items-center justify-center rounded-lg border border-white/10 bg-kinesys-surface">
-            <p className="text-sm text-white/30">
-              Guide Mode — hand gesture teleoperation (coming soon)
-            </p>
-          </div>
-        )}
+        {activeMode === "Teach" && <TeachPanel />}
+        {activeMode === "Guide" && <GuidePanel />}
       </main>
 
       {/* Footer */}

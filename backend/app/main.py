@@ -14,7 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from ai.llm_client import LLMClient
 from ai.task_decomposer import decompose_command
 from ai.scene_analyzer import scene_state_from_frontend
+from ai.vlm_client import VLMClient
+from ai.procedure_extractor import extract_procedure
 from core.trajectory_planner import plan_trajectory
+from core.action_primitives import PRIMITIVE_REGISTRY
+from services.trajectory_recorder import get_recorder, remove_recorder
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -136,6 +140,20 @@ async def health_check() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# VLM Client (singleton, lazy-init)
+# ---------------------------------------------------------------------------
+
+_vlm_client: VLMClient | None = None
+
+
+def get_vlm_client() -> VLMClient:
+    global _vlm_client
+    if _vlm_client is None:
+        _vlm_client = VLMClient()
+    return _vlm_client
+
+
+# ---------------------------------------------------------------------------
 # Voice Command Pipeline
 # ---------------------------------------------------------------------------
 
@@ -234,6 +252,233 @@ async def handle_voice_command(
 
 
 # ---------------------------------------------------------------------------
+# Teach Mode — VLM Procedural Extraction
+# ---------------------------------------------------------------------------
+
+
+async def handle_teach_extract(
+    websocket: WebSocket,
+    data: dict[str, Any],
+) -> None:
+    """
+    Teach extraction pipeline:
+      keyframe images → VLM analysis → validated action sequence
+    """
+    keyframes = data.get("keyframes", [])
+
+    if not keyframes:
+        await manager.send_json(websocket, {
+            "type": "teach_extract_error",
+            "error": "No keyframes received",
+        })
+        return
+
+    # Extract base64 images from keyframe objects
+    images_b64: list[str] = []
+    for kf in keyframes:
+        img = kf.get("imageBase64", "") if isinstance(kf, dict) else str(kf)
+        if img:
+            images_b64.append(img)
+
+    if len(images_b64) < 2:
+        await manager.send_json(websocket, {
+            "type": "teach_extract_error",
+            "error": f"Need at least 2 keyframe images, got {len(images_b64)}",
+        })
+        return
+
+    logger.info("Teach extract: processing %d keyframes", len(images_b64))
+
+    # Send processing status
+    await manager.send_json(websocket, {
+        "type": "status_update",
+        "state": "ANALYZING",
+    })
+
+    vlm = get_vlm_client()
+    confidence_threshold = float(data.get("confidence_threshold", 0.7))
+    result = await extract_procedure(
+        images_base64=images_b64,
+        vlm_client=vlm,
+        confidence_threshold=confidence_threshold,
+    )
+
+    if not result.success:
+        logger.warning("Teach extraction failed: %s", result.error)
+        await manager.send_json(websocket, {
+            "type": "teach_extract_error",
+            "error": result.error or "Extraction failed",
+        })
+        return
+
+    logger.info(
+        "Teach extraction: %d actions, %d need confirmation",
+        len(result.actions),
+        sum(1 for a in result.actions if a.needs_confirmation),
+    )
+
+    await manager.send_json(websocket, {
+        "type": "teach_extract_result",
+        "actions": [a.to_dict() for a in result.actions],
+        "summary": result.summary,
+        "objects_detected": result.objects_detected,
+        "frame_count": result.frame_count,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def handle_teach_execute(
+    websocket: WebSocket,
+    data: dict[str, Any],
+) -> None:
+    """
+    Execute confirmed teach actions through the trajectory planner.
+    Receives user-confirmed actions and sends them to plan_trajectory.
+    """
+    confirmed_actions = data.get("actions", [])
+    scene_data = data.get("scene", {})
+
+    if not confirmed_actions:
+        await manager.send_json(websocket, {
+            "type": "teach_execute_error",
+            "error": "No confirmed actions to execute",
+        })
+        return
+
+    logger.info("Teach execute: %d confirmed actions", len(confirmed_actions))
+
+    # Parse scene
+    try:
+        scene = scene_state_from_frontend(scene_data)
+    except Exception as exc:
+        logger.error("Scene parse error: %s", exc)
+        await manager.send_json(websocket, {
+            "type": "teach_execute_error",
+            "error": f"Failed to parse scene state: {exc}",
+        })
+        return
+
+    await manager.send_json(websocket, {
+        "type": "status_update",
+        "state": "PLANNING",
+    })
+
+    # Convert confirmed actions to trajectory planner format
+    planner_actions = []
+    for action in confirmed_actions:
+        planner_actions.append({
+            "action": action.get("action", ""),
+            "params": action.get("params", {}),
+        })
+
+    plan = plan_trajectory(planner_actions, scene)
+
+    waypoints_list = [
+        {
+            "x": wp.x,
+            "y": wp.y,
+            "z": wp.z,
+            "roll": wp.roll,
+            "pitch": wp.pitch,
+            "yaw": wp.yaw,
+            "gripper_open": wp.gripper_open,
+        }
+        for wp in plan.all_waypoints
+    ]
+
+    if plan.narration_sequence:
+        confirmation = "Executing taught procedure. " + ". ".join(plan.narration_sequence) + "."
+    else:
+        confirmation = "Executing taught procedure."
+
+    await manager.send_json(websocket, {
+        "type": "plan_result",
+        "plan": plan.to_dict(),
+        "waypoints": waypoints_list,
+        "confirmation": confirmation,
+        "source": "teach_mode",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ---------------------------------------------------------------------------
+# Guide Mode — Trajectory Record & Replay
+# ---------------------------------------------------------------------------
+
+
+async def handle_guide_record(
+    websocket: WebSocket,
+    data: dict[str, Any],
+    connection_id: str,
+) -> None:
+    """
+    Store a hand-teleoperation trajectory received from the frontend.
+    Expects: { type, trajectory_id, points: [{timestamp_ms, x, y, z, gripper_open}], metadata }
+    """
+    trajectory_id: str = data.get("trajectory_id", f"traj_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}")
+    points_raw: list[dict[str, Any]] = data.get("points", [])
+    metadata: dict[str, Any] = data.get("metadata", {})
+
+    if not points_raw:
+        await manager.send_json(websocket, {
+            "type": "guide_record_error",
+            "error": "No trajectory points received",
+        })
+        return
+
+    recorder = get_recorder(connection_id)
+    traj = recorder.record(trajectory_id, points_raw, metadata)
+
+    logger.info(
+        "Guide trajectory recorded: id=%s, points=%d, duration=%.1fs",
+        traj.id, traj.point_count, traj.duration_ms / 1000,
+    )
+
+    await manager.send_json(websocket, {
+        "type": "guide_record_saved",
+        "trajectory_id": traj.id,
+        "point_count": traj.point_count,
+        "duration_ms": traj.duration_ms,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def handle_guide_replay(
+    websocket: WebSocket,
+    data: dict[str, Any],
+    connection_id: str,
+) -> None:
+    """
+    Replay the stored trajectory, streaming waypoints back to the frontend
+    at the original recorded timestamps.
+    Expects: { type, trajectory_id?, speed_multiplier? }
+    """
+    trajectory_id: str | None = data.get("trajectory_id")
+    speed_multiplier: float = float(data.get("speed_multiplier", 1.0))
+    speed_multiplier = max(0.1, min(10.0, speed_multiplier))  # clamp to sane range
+
+    recorder = get_recorder(connection_id)
+
+    async def send_fn(msg: dict[str, Any]) -> None:
+        await manager.send_json(websocket, msg)
+
+    await recorder.start_replay_task(send_fn, trajectory_id, speed_multiplier)
+
+
+async def handle_guide_replay_cancel(
+    websocket: WebSocket,
+    connection_id: str,
+) -> None:
+    """Cancel any active replay for this connection."""
+    recorder = get_recorder(connection_id)
+    recorder.cancel_replay()
+    await manager.send_json(websocket, {
+        "type": "guide_replay_cancelled",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+# ---------------------------------------------------------------------------
 # WebSocket Endpoint
 # ---------------------------------------------------------------------------
 
@@ -241,6 +486,9 @@ async def handle_voice_command(
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await manager.connect(websocket)
+
+    # Use the websocket object id as connection key
+    connection_id = str(id(websocket))
 
     # Send welcome message with server info
     await manager.send_json(websocket, {
@@ -270,6 +518,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if msg_type == "voice_command":
                 await handle_voice_command(websocket, data)
+            elif msg_type == "teach_extract":
+                await handle_teach_extract(websocket, data)
+            elif msg_type == "teach_execute":
+                await handle_teach_execute(websocket, data)
+            elif msg_type == "guide_record":
+                await handle_guide_record(websocket, data, connection_id)
+            elif msg_type == "guide_replay":
+                await handle_guide_replay(websocket, data, connection_id)
+            elif msg_type == "guide_replay_cancel":
+                await handle_guide_replay_cancel(websocket, connection_id)
             elif msg_type == "ping":
                 await manager.send_json(websocket, {"type": "pong"})
             else:
@@ -282,8 +540,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 })
 
     except WebSocketDisconnect:
+        remove_recorder(connection_id)
         manager.disconnect(websocket)
         logger.info("WebSocket cleanly disconnected")
     except Exception:
+        remove_recorder(connection_id)
         manager.disconnect(websocket)
         logger.exception("WebSocket error")

@@ -15,6 +15,81 @@ import * as THREE from "three";
 import armController from "../engine/armController";
 
 // ---------------------------------------------------------------------------
+// Trajectory Trail
+// ---------------------------------------------------------------------------
+
+const TRAIL_LENGTH = 80; // Number of positions to keep in the ring buffer
+const TRAIL_COLOR_HEAD = new THREE.Color("#a5b4fc"); // newest point
+const TRAIL_COLOR_TAIL = new THREE.Color("#312e81"); // oldest point
+
+/**
+ * Renders a fading line showing the recent path of the end-effector.
+ * Uses a fixed-size Float32Array ring buffer updated every frame.
+ * Vertex colors fade from bright indigo (newest) to dark at the tail.
+ */
+function TrajectoryTrail() {
+  // Allocate geometry + material once per mount
+  const geoRef = useRef<THREE.BufferGeometry | null>(null);
+  const lineObjRef = useRef<THREE.Line | null>(null);
+  const ring = useRef<THREE.Vector3[]>([]);
+  const tmpColor = useRef(new THREE.Color());
+
+  if (!geoRef.current) {
+    const geo = new THREE.BufferGeometry();
+    const positions = new Float32Array(TRAIL_LENGTH * 3);
+    const colors = new Float32Array(TRAIL_LENGTH * 3);
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geo.setDrawRange(0, 0);
+    geoRef.current = geo;
+
+    const mat = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.85,
+      linewidth: 1,
+      depthWrite: false,
+    });
+    lineObjRef.current = new THREE.Line(geo, mat);
+  }
+
+  useFrame(() => {
+    const pos = armController.getEndEffectorPosition();
+
+    ring.current.push(pos.clone());
+    if (ring.current.length > TRAIL_LENGTH) {
+      ring.current.shift();
+    }
+
+    const geo = geoRef.current!;
+    const count = ring.current.length;
+    const posAttr = geo.attributes.position as THREE.BufferAttribute;
+    const colAttr = geo.attributes.color as THREE.BufferAttribute;
+    const posArr = posAttr.array as Float32Array;
+    const colArr = colAttr.array as Float32Array;
+
+    for (let i = 0; i < count; i++) {
+      const p = ring.current[i]!;
+      posArr[i * 3]     = p.x;
+      posArr[i * 3 + 1] = p.y;
+      posArr[i * 3 + 2] = p.z;
+
+      const t = count > 1 ? i / (count - 1) : 1;
+      tmpColor.current.lerpColors(TRAIL_COLOR_TAIL, TRAIL_COLOR_HEAD, t);
+      colArr[i * 3]     = tmpColor.current.r;
+      colArr[i * 3 + 1] = tmpColor.current.g;
+      colArr[i * 3 + 2] = tmpColor.current.b;
+    }
+
+    posAttr.needsUpdate = true;
+    colAttr.needsUpdate = true;
+    geo.setDrawRange(0, count);
+  });
+
+  return <primitive object={lineObjRef.current!} />;
+}
+
+// ---------------------------------------------------------------------------
 // Dimensions (matching IK solver config)
 // ---------------------------------------------------------------------------
 
@@ -93,7 +168,11 @@ export default function RobotArm() {
   });
 
   return (
-    <group position={[0, 0.5, 0]}>
+    <>
+      {/* Fading trajectory trail — rendered in world space */}
+      <TrajectoryTrail />
+
+      <group position={[0, 0.5, 0]}>
       {/* Base platform */}
       <mesh material={baseMaterial} position={[0, -BASE_HEIGHT / 2, 0]} castShadow>
         <cylinderGeometry args={[BASE_RADIUS, BASE_RADIUS * 1.3, BASE_HEIGHT, 32]} />
@@ -177,5 +256,6 @@ export default function RobotArm() {
         </group>
       </group>
     </group>
+    </>
   );
 }
